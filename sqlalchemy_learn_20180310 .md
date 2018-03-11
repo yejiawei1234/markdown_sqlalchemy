@@ -158,6 +158,83 @@ while more_results:
             state_count[row.state] = 1 
 results_proxy.close() #要显式关闭，这个是重点 
 ```
+## 建立表的方法(仅限于sqlite)  
+建立表的方法和reflact的方法很像，只需要把autoload和autoload_with这两个参数替换为需要建立的表的样式，例子如下  
+
+```
+from sqlalchemy import Table, Column, String, Integer, Float, Boolean, MetaData
+
+metadata = MetaData()
+engine = create_engine('sqlite:///test.db') 
+data = Table('data', metadata,
+             Column('name', String(255)),
+             Column('count', Integer()),
+             Column('amount', Float()),
+             Column('valid', Boolean())
+			  )
+
+metadata.create_all(engine) 
+print(repr(metadata.tables['data']))
+```
+## insert数据的方法  
+
+``` 
+from sqlalchemy import insert, select
+stmt = insert(data).values(name='Anna', count=1, amount=1000.00, valid=True)
+results = connection.execute(stmt)
+print(results.rowcount)
+stmt = select([data]).where(data.columns.name == 'Anna')
+print(connection.execute(stmt).first())  
+
+#insert多条数据的方法  
+values_list = [
+    {'name': 'Anna', 'count': 1, 'amount': 1000.00, 'valid': True},
+    {'name': 'Taylor', 'count': 1, 'amount': 750.00, 'valid': False}
+]
+
+stmt = insert(data)
+results = connection.execute(stmt, values_list)
+
+#还可以通过读取csv并把数据insert到表中  
+stmt = insert(census)
+
+values_list = []
+total_rowcount = 0
+
+for idx, row in enumerate(csv_reader):
+    #create data and append to values_list
+    data = {'state': row[0], 'sex': row[1], 'age': row[2], 'pop2000': row[3],
+            'pop2008': row[4]}
+    values_list.append(data)
+
+    if idx % 51 == 0:
+        results = connection.execute(stmt, values_list)
+        total_rowcount += results.rowcount
+        values_list = []
+```  
+## update 的使用方法  
+
+``` 
+stmt = update(state_fact).values(fips_state = 36) 
+results = connection.execute(stmt) 
+```
+
+## delete 的使用方法  
+
+``` 
+from sqlalchemy import select, delete 
+stmt = delete(census) 
+results = connection.execute(stmt) 
+
+
+#删掉一个表
+state_fact.drop(engine)
+print(state_fact.exists(engine))
+
+#删掉所有的表
+metadata.drop_all(engine) 
+print(census.exists(engine)) 
+``` 
 
 
 
