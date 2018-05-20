@@ -127,6 +127,85 @@ stmt = stmt.select_from(
     census.join(state_fact, census.columns.state == state_fact.columns.name)) 
 #这个地方把两个表想要join的地方传入即可，但是这里是inner join，left join的方式怎么搞呢？
 ```
+## join 多个表的方法 
+如果想要实现多个表的join，例如如下的需求  
+
+``` 
+SELECT
+ trackid,
+ tracks.name AS Track,
+ albums.title AS Album,
+ artists.name AS Artist
+FROM
+ tracks
+INNER JOIN albums ON albums.albumid = tracks.albumid
+INNER JOIN artists ON artists.artistid = albums.artistid;
+```  
+需要在三个表上进行join的操作，如果使用sqlalchemy，可以写为如下的样子  
+
+```
+from sqlalchemy import create_engine, MetaData, select, Table, func
+from sqlalchemy.sql import and_, or_, between, case, cast
+import pandas as pd
+
+engine = create_engine('sqlite://chinook.db')
+connection = engine.connect()
+metadata = MetaData()
+tracks = Table('tracks', metadata, autoload=True, autoload_with=engine)
+customers = Table('customers', metadata, autoload=True, autoload_with=engine)
+albums = Table('albums', metadata, autoload=True, autoload_with=engine)
+artists = Table('artists', metadata, autoload=True, autoload_with=engine)
+stmt = select([tracks.columns.TrackId, 
+               tracks.columns.Name.label('Track'), 
+               albums.columns.Title.label('Title'),
+               artists.columns.Name.label('Artist')]).\
+                      select_from(tracks.join(albums).join(artists))
+
+results = connection.execute(stmt).fetchall()
+
+df = pd.DataFrame(results)
+df.columns = results[0].keys()
+```
+join 函数支持链式操作(我也是试出来的，google了半天没有一个靠谱的答案)，可以将sqlalchemy的sql语句打印出来对比一下，如果不是在交互式的环境下，就print(str(stmt))，如果是在交互式的环境下，直接str(stmt)，效果如下
+
+```
+'SELECT tracks."TrackId", 
+tracks."Name" AS "Track", albums."Title" AS "Title", artists."Name" AS "Artist" 
+\nFROM tracks 
+JOIN albums ON albums."AlbumId" = tracks."AlbumId" 
+JOIN artists ON artists."ArtistId" = albums."ArtistId"'
+
+#Python下的字符串的形式，我简单整理为与sql类似的形式，如下
+SELECT
+    tracks.TrackId
+    tracks.Name AS Track
+    albums.Title AS Title
+    artists.Name AS Artist
+FROM
+    tracks
+JOIN albums ON albums.AlbumId = tracks.AlbumId
+JOIN artists ON artists.ArtistId = albums.ArtistId
+```
+
+# left join 以及full outer join 的方法
+如果想要使用left join的方法，只需要在join的函数上使用isouter=True就可以了，同时，如果想要使用full outer join，只需要在join函数上使用full=True
+
+```
+stmt = select([artists.c.ArtistId,
+               albums.c.AlbumId]).\
+               select_from(artists.join(albums, isouter=True)).\
+               where(albums.c.AlbumId == None)
+               
+#翻译为sql的写法为
+SELECT 
+    artists.ArtistId, albums.AlbumId 
+FROM 
+    artists
+LEFT OUTER JOIN albums ON artists.ArtistId = albums.ArtistId 
+WHERE albums.AlbumId IS NULL
+
+```
+
 ## 自表内join (我自己发明的词)  
 其实就是需要在一个同一个表上做join，自己和自己的不同列做join的操作，这里就涉及到了需要使用 **alias()** 这个函数  
 
@@ -140,7 +219,79 @@ stmt = stmt.where(managers.columns.id == employees.columns.mgr)
 stmt = stmt.order_by(managers.columns.name) 
 results = connection.execute(stmt).fetchall() 
 
+#另一个例子  
+manager = employees.alias() 
+stmt = select([(manager.c.FirstName + manager.c.LastName).label('manager'),
+               (employees.c.FirstName + employees.c.LastName).label('direct report')]).\
+               select_from(employees.join(manager, manager.c.EmployeeId == employees.c.ReportsTo)).\
+               order_by('manager')
+               
+#再来一个例子
+SELECT DISTINCT
+ e1.city,
+ e1.firstName || ' ' || e1.lastname AS fullname
+FROM
+ employees e1
+INNER JOIN employees e2 ON e2.city = e1.city 
+   AND (e1.firstname <> e2.firstname AND e1.lastname <> e2.lastname)
+ORDER BY
+ e1.city;
+
+e2 = employees.alias() 
+stmt = select([employees.c.City.distinct(),
+               (employees.c.FirstName + employees.c.LastName).label('fullname')]).\
+               select_from(employees.join(e2, e2.c.City == employees.c.City)).\
+               where(and_(employees.c.FirstName != e2.c.FirstName,
+                          employees.c.LastName != e2.c.LastName)).\
+               order_by(employees.c.City)
+
+```  
+## having 的用法
+
+这个可以直接上例子 
+
 ```
+stmt = select([tracks.c. AlbumId,
+               tracks.c.Name,
+               func.count(tracks.c.TrackId)]).\
+               group_by(tracks.c. AlbumId).\
+               having(tracks.c. AlbumId == 1)
+```
+
+## case 的用法  
+这个也可以直接上例子  
+
+```
+cc = case(
+          [
+            (tracks.c.Milliseconds < 60000, 'short'),
+            (and_(tracks.c.Milliseconds < 300000,
+                  tracks.c.Milliseconds > 6000), 'medium')
+          ],else_='long'
+          )
+stmt = select([tracks.c.TrackId,
+               tracks.c.Name,
+               cc.label('category')])
+```
+
+## union 以及union all的用法  
+直接上例子
+
+```
+t1 = select([employees.c.FirstName,
+             employees.c.LastName])
+t2 = select([employees.c.FirstName,
+             employees.c.LastName])
+stmt = t1.union(t2)
+
+t1 = select([employees.c.FirstName,
+             employees.c.LastName])
+t2 = select([employees.c.FirstName,
+             employees.c.LastName])
+stmt = t1.union_all(t2)
+
+```
+
 ## 使用fetchmany()函数  
 可以使用fetchmany()函数，来控制一次返回的数据的量，如果是在处理一张很大的表的话  
 
